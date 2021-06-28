@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -13,7 +12,9 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 )
 
@@ -28,13 +29,13 @@ func init() {
 	uploader = s3manager.NewUploader(sess)
 
 }
-func uploadImageTos3(sha256String string, calculatedHashes []byte, contentType string) error {
+func uploadImageTos3(sha256String string, imageBytes []byte, contentType string) error {
 
 	// Upload the file to S3.
 	result, err := uploader.Upload(&s3manager.UploadInput{
 		Bucket:      aws.String("watermark-image-bucket"),
 		Key:         aws.String(sha256String),
-		Body:        bytes.NewReader(calculatedHashes),
+		Body:        bytes.NewBuffer(imageBytes),
 		ContentType: aws.String(contentType),
 	})
 	if err != nil {
@@ -55,10 +56,12 @@ func uploadImageHandler(ctx context.Context, req events.APIGatewayProxyRequest) 
 	}
 	// NOTE: API Gateway is set up with */* as binary media type, so all APIGatewayProxyRequests will be base64 encoded
 	r.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(req.Body)))
-	fmt.Println("Converted to request")
-
+	fmt.Println("Converted to request", len([]byte(req.Body)))
+	r.ParseMultipartForm(32 << 20)
 	// We should be able to gather the data as usual now.
 	file, header, err := r.FormFile("file")
+	fmt.Println("Converted to request", header)
+
 	if err != nil {
 		return events.APIGatewayProxyResponse{
 			StatusCode: 404,
@@ -67,17 +70,18 @@ func uploadImageHandler(ctx context.Context, req events.APIGatewayProxyRequest) 
 	}
 	defer file.Close()
 	imageBytes, err := ioutil.ReadAll(file)
+	hash := sha256.New()
+	if _, err := io.Copy(hash, bytes.NewReader(imageBytes)); err != nil {
+		log.Fatal(err)
+	}
+	sum := hash.Sum(nil)
 
+	fmt.Printf("%x\n", sum)
 	fmt.Println("Header: Filename, ", header.Filename)
 	fmt.Println("Header: Filesize, ", header.Size)
 	fmt.Println("Header: Filetype, ", header.Header.Get("Content-Type"))
 
-	// Calculate the MD5 checksum
-	var calculatedHash = md5.Sum(imageBytes)
-	fmt.Printf("%x\n", calculatedHash)
-	sha256 := sha256.Sum256(imageBytes)
-	fmt.Printf("%x\n", sha256)
-	var sha256String = hex.EncodeToString(sha256[:])
+	var sha256String = hex.EncodeToString(sum[:])
 
 	uploadImageTos3(sha256String, imageBytes, header.Header.Get("Content-Type"))
 	resp := events.APIGatewayProxyResponse{
