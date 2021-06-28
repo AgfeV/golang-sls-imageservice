@@ -3,19 +3,47 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"io/ioutil"
 	"net/http"
 )
 
-// Response is of type APIGatewayProxyResponse since we're leveraging the
-// AWS Lambda Proxy Request functionality (default behavior)
-//
-// https://serverless.com/framework/docs/providers/aws/events/apigateway/#lambda-proxy-integration
+var svc *dynamodb.DynamoDB
+var uploader *s3manager.Uploader
 
-func uploadImage(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+func init() {
+	// Connect to dynamoDB
+	sess := session.Must(session.NewSession())
+
+	svc = dynamodb.New(sess)
+	uploader = s3manager.NewUploader(sess)
+
+}
+func uploadImageTos3(sha256String string, calculatedHashes []byte, contentType string) error {
+
+	// Upload the file to S3.
+	result, err := uploader.Upload(&s3manager.UploadInput{
+		Bucket:      aws.String("watermark-image-bucket"),
+		Key:         aws.String(sha256String),
+		Body:        bytes.NewReader(calculatedHashes),
+		ContentType: aws.String(contentType),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to upload file, %v", err)
+	}
+	fmt.Printf("file uploaded to, %s\n", aws.StringValue(&result.Location))
+	return nil
+}
+func uploadImageHandler(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 
 	// Go ahead and create the req to a http request
 	r := http.Request{}
@@ -38,12 +66,20 @@ func uploadImage(ctx context.Context, req events.APIGatewayProxyRequest) (events
 		}, err
 	}
 	defer file.Close()
-	_, err = ioutil.ReadAll(file)
+	imageBytes, err := ioutil.ReadAll(file)
 
 	fmt.Println("Header: Filename, ", header.Filename)
 	fmt.Println("Header: Filesize, ", header.Size)
 	fmt.Println("Header: Filetype, ", header.Header.Get("Content-Type"))
 
+	// Calculate the MD5 checksum
+	var calculatedHash = md5.Sum(imageBytes)
+	fmt.Printf("%x\n", calculatedHash)
+	sha256 := sha256.Sum256(imageBytes)
+	fmt.Printf("%x\n", sha256)
+	var sha256String = hex.EncodeToString(sha256[:])
+
+	uploadImageTos3(sha256String, imageBytes, header.Header.Get("Content-Type"))
 	resp := events.APIGatewayProxyResponse{
 		StatusCode:      200,
 		IsBase64Encoded: false,
@@ -58,5 +94,5 @@ func uploadImage(ctx context.Context, req events.APIGatewayProxyRequest) (events
 }
 
 func main() {
-	lambda.Start(uploadImage)
+	lambda.Start(uploadImageHandler)
 }
