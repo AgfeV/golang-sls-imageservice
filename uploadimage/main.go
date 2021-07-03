@@ -55,27 +55,15 @@ func uploadImageHandler(ctx context.Context, req events.APIGatewayProxyRequest) 
 			r.Header.Set(k, v)
 		}
 	}
-	fmt.Println("New Request hearers: ", r.Header)
+
 	// NOTE: API Gateway is set up with */* as binary media type, so all APIGatewayProxyRequests will be base64 encoded
-	body, err := base64.StdEncoding.DecodeString(req.Body)
-	if err != nil {
-		return events.APIGatewayProxyResponse{
-			StatusCode: 404,
-			Body:       err.Error(),
-		}, err
-	}
-
+	body, _ := base64.StdEncoding.DecodeString(req.Body)
+	// Copy over the decoded binary image to new manually created http request.
 	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
-	fmt.Println("Length of request body: ", len([]byte(req.Body)))
-	// We should be able to gather the data as usual now.
-	// Here r is *http.Request
-	parseErr := r.ParseMultipartForm(32 << 20) // maxMemory 32MB
-	if parseErr != nil {
-		fmt.Println("failed to parse multipart message", http.StatusBadRequest)
-	}
+	r.ParseMultipartForm(32 << 20) // maxMemory 32MB
 
+	// Retrieve the binary image
 	file, header, err := r.FormFile("file")
-	fmt.Println("Multipart Header: ", header)
 	if err != nil {
 		return events.APIGatewayProxyResponse{
 			StatusCode: 404,
@@ -92,6 +80,7 @@ func uploadImageHandler(ctx context.Context, req events.APIGatewayProxyRequest) 
 			Body:       err.Error(),
 		}, err
 	}
+	// Calculate the sha256 checksum
 	hash := sha256.New()
 	if _, err := io.Copy(hash, bytes.NewReader(imageBytes)); err != nil {
 		log.Fatal(err)
@@ -105,7 +94,15 @@ func uploadImageHandler(ctx context.Context, req events.APIGatewayProxyRequest) 
 
 	var sha256String = hex.EncodeToString(sum[:])
 
-	uploadImageTos3(sha256String, imageBytes, header.Header.Get("Content-Type"))
+	uploadErr := uploadImageTos3(sha256String, imageBytes, header.Header.Get("Content-Type"))
+	if uploadErr != nil {
+		fmt.Println("Upload to s3 bucket Error: ", uploadErr.Error())
+		return events.APIGatewayProxyResponse{
+			StatusCode: 404,
+			Body:       uploadErr.Error(),
+		}, uploadErr
+	}
+
 	resp := events.APIGatewayProxyResponse{
 		StatusCode:      200,
 		IsBase64Encoded: false,
