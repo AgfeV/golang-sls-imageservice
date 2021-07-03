@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
@@ -54,14 +55,27 @@ func uploadImageHandler(ctx context.Context, req events.APIGatewayProxyRequest) 
 			r.Header.Set(k, v)
 		}
 	}
+	fmt.Println("New Request hearers: ", r.Header)
 	// NOTE: API Gateway is set up with */* as binary media type, so all APIGatewayProxyRequests will be base64 encoded
-	r.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(req.Body)))
-	fmt.Println("Converted to request", len([]byte(req.Body)))
-	r.ParseMultipartForm(32 << 20)
-	// We should be able to gather the data as usual now.
-	file, header, err := r.FormFile("file")
-	fmt.Println("Converted to request", header)
+	body, err := base64.StdEncoding.DecodeString(req.Body)
+	if err != nil {
+		return events.APIGatewayProxyResponse{
+			StatusCode: 404,
+			Body:       err.Error(),
+		}, err
+	}
 
+	r.Body = ioutil.NopCloser(bytes.NewBuffer(body))
+	fmt.Println("Length of request body: ", len([]byte(req.Body)))
+	// We should be able to gather the data as usual now.
+	// Here r is *http.Request
+	parseErr := r.ParseMultipartForm(32 << 20) // maxMemory 32MB
+	if parseErr != nil {
+		fmt.Println("failed to parse multipart message", http.StatusBadRequest)
+	}
+
+	file, header, err := r.FormFile("file")
+	fmt.Println("Multipart Header: ", header)
 	if err != nil {
 		return events.APIGatewayProxyResponse{
 			StatusCode: 404,
@@ -69,7 +83,15 @@ func uploadImageHandler(ctx context.Context, req events.APIGatewayProxyRequest) 
 		}, err
 	}
 	defer file.Close()
+
 	imageBytes, err := ioutil.ReadAll(file)
+	if err != nil {
+		fmt.Println("ReadAll error: ", err.Error())
+		return events.APIGatewayProxyResponse{
+			StatusCode: 404,
+			Body:       err.Error(),
+		}, err
+	}
 	hash := sha256.New()
 	if _, err := io.Copy(hash, bytes.NewReader(imageBytes)); err != nil {
 		log.Fatal(err)
