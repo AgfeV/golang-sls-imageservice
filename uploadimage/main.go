@@ -12,11 +12,13 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 )
 
 var svc *dynamodb.DynamoDB
@@ -24,10 +26,11 @@ var uploader *s3manager.Uploader
 
 type Image struct {
 	ImageID    string
+	UserID     string
 	Size       int64
-	ImageBytes []byte
 	Filename   string
 	ImageType  string
+	ImageBytes []byte
 }
 
 func init() {
@@ -49,11 +52,33 @@ func (imgPtr *Image) uploadImageTos3() error {
 		return fmt.Errorf("failed to upload file, %v", err)
 	}
 	fmt.Printf("file uploaded to, %s\n", aws.StringValue(&result.Location))
-	return nil
+	return err
 }
 func (imgPtr *Image) updateImageInDynamo() error {
-	fmt.Println("updateImageInDynamo", imgPtr.Filename)
-	return nil
+
+	var imageRequest interface{} = struct {
+		ImageID   string
+		UserID    string
+		Size      int64
+		Filename  string
+		ImageType string
+	}{
+		ImageID:   imgPtr.ImageID,
+		UserID:    imgPtr.UserID,
+		Size:      imgPtr.Size,
+		Filename:  imgPtr.Filename,
+		ImageType: imgPtr.ImageType,
+	}
+	av, err := dynamodbattribute.MarshalMap(imageRequest)
+
+	if err != nil {
+		log.Fatalf("Got error marshalling new movie item: %s", err)
+	}
+	_, err = svc.PutItem(&dynamodb.PutItemInput{
+		Item:      av,
+		TableName: aws.String(os.Getenv("TABLE_NAME")),
+	})
+	return err
 }
 
 func uploadImageHandler(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
@@ -106,6 +131,7 @@ func uploadImageHandler(ctx context.Context, req events.APIGatewayProxyRequest) 
 
 	var imageObject = Image{
 		ImageID:    sha256String,
+		UserID:     "testID",
 		Size:       header.Size,
 		ImageBytes: imageBytes,
 		Filename:   header.Filename,

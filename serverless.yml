@@ -35,6 +35,23 @@ provider:
        - "s3:PutObject"
       Resource:
        - !Sub arn:aws:s3:::watermark-image-bucket/*
+    - Effect: "Allow"
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:DeleteItem
+      Resource:
+        Fn::Join:
+          - ""
+          - - "arn:aws:dynamodb:*:*:table/"
+            - "Ref" : "imageTable"
+
+  # you can define service wide environment variables here
+  environment:
+    TABLE_NAME: imageTable
+
 # you can overwrite defaults here
 #  stage: dev
 #  region: us-east-1
