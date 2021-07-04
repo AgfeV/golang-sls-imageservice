@@ -22,22 +22,28 @@ import (
 var svc *dynamodb.DynamoDB
 var uploader *s3manager.Uploader
 
+type Image struct {
+	ImageID    string
+	Size       int64
+	ImageBytes []byte
+	Filename   string
+	ImageType  string
+}
+
 func init() {
 	// Connect to dynamoDB
 	sess := session.Must(session.NewSession())
-
 	svc = dynamodb.New(sess)
 	uploader = s3manager.NewUploader(sess)
 
 }
-func uploadImageTos3(sha256String string, imageBytes []byte, contentType string) error {
+func (imgPtr *Image) uploadImageTos3() error {
 
-	// Upload the file to S3.
 	result, err := uploader.Upload(&s3manager.UploadInput{
 		Bucket:      aws.String("watermark-image-bucket"),
-		Key:         aws.String(sha256String),
-		Body:        bytes.NewBuffer(imageBytes),
-		ContentType: aws.String(contentType),
+		Key:         aws.String(imgPtr.ImageID),
+		Body:        bytes.NewBuffer(imgPtr.ImageBytes),
+		ContentType: aws.String(imgPtr.ImageType),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to upload file, %v", err)
@@ -45,6 +51,11 @@ func uploadImageTos3(sha256String string, imageBytes []byte, contentType string)
 	fmt.Printf("file uploaded to, %s\n", aws.StringValue(&result.Location))
 	return nil
 }
+func (imgPtr *Image) updateImageInDynamo() error {
+	fmt.Println("updateImageInDynamo", imgPtr.Filename)
+	return nil
+}
+
 func uploadImageHandler(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 
 	// Go ahead and create the req to a http request
@@ -91,16 +102,32 @@ func uploadImageHandler(ctx context.Context, req events.APIGatewayProxyRequest) 
 	fmt.Println("Header: Filename, ", header.Filename)
 	fmt.Println("Header: Filesize, ", header.Size)
 	fmt.Println("Header: Filetype, ", header.Header.Get("Content-Type"))
-
 	var sha256String = hex.EncodeToString(sum[:])
 
-	uploadErr := uploadImageTos3(sha256String, imageBytes, header.Header.Get("Content-Type"))
-	if uploadErr != nil {
-		fmt.Println("Upload to s3 bucket Error: ", uploadErr.Error())
+	var imageObject = Image{
+		ImageID:    sha256String,
+		Size:       header.Size,
+		ImageBytes: imageBytes,
+		Filename:   header.Filename,
+		ImageType:  header.Header.Get("Content-Type"),
+	}
+
+	dynamoUploadError := imageObject.updateImageInDynamo()
+	if dynamoUploadError != nil {
+		fmt.Println("update dynamodb image Error: ", dynamoUploadError.Error())
 		return events.APIGatewayProxyResponse{
 			StatusCode: 404,
-			Body:       uploadErr.Error(),
-		}, uploadErr
+			Body:       dynamoUploadError.Error(),
+		}, dynamoUploadError
+	}
+
+	s3UploadErr := imageObject.uploadImageTos3()
+	if s3UploadErr != nil {
+		fmt.Println("Upload to s3 bucket Error: ", s3UploadErr.Error())
+		return events.APIGatewayProxyResponse{
+			StatusCode: 404,
+			Body:       s3UploadErr.Error(),
+		}, s3UploadErr
 	}
 
 	resp := events.APIGatewayProxyResponse{
