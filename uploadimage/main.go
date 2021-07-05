@@ -131,7 +131,7 @@ func uploadImageHandler(ctx context.Context, req events.APIGatewayProxyRequest) 
 
 	var imageObject = Image{
 		ImageID:    sha256String,
-		UserID:     "testID",
+		UserID:     "123",
 		Size:       header.Size,
 		ImageBytes: imageBytes,
 		Filename:   header.Filename,
