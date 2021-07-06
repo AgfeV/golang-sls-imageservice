@@ -33,6 +33,7 @@ provider:
     - Effect: "Allow"
       Action:
        - "s3:PutObject"
+       - "s3:GetObject"
       Resource:
        - !Sub arn:aws:s3:::watermark-image-bucket/*
     - Effect: "Allow"
@@ -51,6 +52,7 @@ provider:
   # you can define service wide environment variables here
   environment:
     TABLE_NAME: imageTable
+    BUCKET_NAME: watermark-image-bucket
 
 package:
   exclude:
