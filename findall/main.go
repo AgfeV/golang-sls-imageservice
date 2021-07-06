@@ -64,9 +64,7 @@ func GetPresignedURL(c context.Context, api S3PresignGetObjectAPI, input *s3.Get
 	return api.PresignGetObject(c, input)
 }
 
-// RetrieveSignedURL TODO: Sends out the request for the signed url untill I figure out how to send through channels.
 func RetrieveSignedURL(image Image, c chan Image) {
-	// Take the number of requests to fan out each
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(os.Getenv("BUCKET_NAME")),
 		Key:    aws.String(image.ImageID),
